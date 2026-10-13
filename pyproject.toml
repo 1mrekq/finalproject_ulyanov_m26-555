@@ -1,0 +1,33 @@
+[project]
+name = "valutatrade-hub"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Ulyanov Oleg", email = "imrekq@yandex.ru" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "prettytable>=3.18.0",
+]
+
+[project.scripts]
+valutatrade-hub = "valutatrade_hub:main"
+
+[build-system]
+requires = ["uv_build>=0.12.22,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+exclude = ["venv", ".venv", "dist", "__pycache__"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+ignore = [] 
+
+[dependency-groups]
+dev = [
+    "ruff>=0.16.10",
+]
