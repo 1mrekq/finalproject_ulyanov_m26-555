@@ -1,0 +1,28 @@
+from datetime import timedelta
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+DATA_DIR = PROJECT_ROOT / "data"
+USERS_FILE = DATA_DIR / "users.json"
+PORTFOLIOS_FILE = DATA_DIR / "portfolios.json"
+RATES_FILE = DATA_DIR / "rates.json"
+
+RATE_TTL = timedelta(minutes=5)
+BASE_CURRENCY = "USD"
+CRYPTO_CODES = {"BTC", "ETH"}
+
+DEFAULT_RATES = {
+    "EUR_USD": {"rate": 1.0786, "updated_at": "2025-10-09T10:30:00"},
+    "BTC_USD": {"rate": 59337.21, "updated_at": "2025-10-09T10:29:42"},
+    "RUB_USD": {"rate": 0.01016, "updated_at": "2025-10-09T10:31:12"},
+    "ETH_USD": {"rate": 3720.00, "updated_at": "2025-10-09T10:35:00"},
+    "source": "ParserServiceStub",
+    "last_refresh": "2025-10-09T10:35:00",
+}
+
+STUB_RATES = {
+    "EUR_USD": 1.0786,
+    "BTC_USD": 59337.21,
+    "RUB_USD": 0.01016,
+    "ETH_USD": 3720.00,
+}
