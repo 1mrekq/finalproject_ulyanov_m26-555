@@ -1,5 +1,11 @@
 import shlex
 
+from valutatrade_hub.core.currencies import supported_codes
+from valutatrade_hub.core.exceptions import (
+    ApiRequestError,
+    CurrencyNotFoundError,
+    InsufficientFundsError,
+)
 from valutatrade_hub.core.storage import initialize_storage
 from valutatrade_hub.core.usecases import (
     buy,
@@ -19,19 +25,75 @@ CMD_BUY = "buy"
 CMD_SELL = "sell"
 CMD_GET_RATE = "get-rate"
 
+FUNDS_ERROR = (
+    "Недостаточно средств: доступно {available} {code}, требуется {required} {code}"
+)
+API_ERROR = "Ошибка при обращении к внешнему API: {reason}"
+UNKNOWN_CURRENCY_ERROR = "Неизвестная валюта '<code>'"
+MISSING_WALLET_ERROR = (
+    "У вас нет кошелька 'BTC'. Добавьте валюту: "
+    "она создаётся автоматически при первой покупке."
+)
+
+COMMAND_ERRORS = {
+    CMD_REGISTER: (
+        "Имя пользователя '<name>' уже занято",
+        "Пароль должен быть не короче 4 символов",
+    ),
+    CMD_LOGIN: (
+        "Пользователь '<name>' не найден",
+        "Неверный пароль",
+    ),
+    CMD_SHOW_PORTFOLIO: (
+        "Сначала выполните login",
+        "Неизвестная базовая валюта 'ABC'",
+    ),
+    CMD_BUY: (
+        "'amount' должен быть положительным числом",
+        UNKNOWN_CURRENCY_ERROR,
+        FUNDS_ERROR,
+        API_ERROR,
+    ),
+    CMD_SELL: (
+        MISSING_WALLET_ERROR,
+        FUNDS_ERROR,
+        UNKNOWN_CURRENCY_ERROR,
+        API_ERROR,
+    ),
+    CMD_GET_RATE: (
+        UNKNOWN_CURRENCY_ERROR,
+        API_ERROR,
+    ),
+}
+
 current_user = None
 
 
-def help_command() -> None:
-    print("Доступные команды:")
-    print("  register --username <str> --password <str>")
-    print("  login --username <str> --password <str>")
-    print("  show-portfolio [--base <str>]")
-    print("  buy --currency <str> --amount <float>")
-    print("  sell --currency <str> --amount <float>")
-    print("  get-rate --from <str> --to <str>")
-    print("  help")
-    print("  exit")
+def help_command(topic: str | None = None) -> None:
+    if topic is None:
+        print("Доступные команды:")
+        print("  register --username <str> --password <str>")
+        print("  login --username <str> --password <str>")
+        print("  show-portfolio [--base <str>]")
+        print("  buy --currency <str> --amount <float>")
+        print("  sell --currency <str> --amount <float>")
+        print("  get-rate --from <str> --to <str>")
+        print("  help [команда]")
+        print("  exit")
+        print("Подробности и раздел «Ошибки»: help get-rate")
+        return
+
+    errors = COMMAND_ERRORS.get(topic)
+    if errors is None:
+        print(f"Нет справки для '{topic}'. Введите help для списка команд.")
+        return
+
+    print(f"Команда {topic}")
+    print("Ошибки:")
+    for index, message in enumerate(errors, start=1):
+        print(f"  {index}) {message}")
+    if topic == CMD_GET_RATE:
+        print(f"Поддерживаемые коды: {', '.join(supported_codes())}")
 
 
 def tokenize(user_input: str) -> list[str]:
@@ -70,6 +132,22 @@ def require_login():
     return current_user
 
 
+def handle_command_error(error: Exception) -> None:
+    if isinstance(error, InsufficientFundsError):
+        print(error)
+        return
+    if isinstance(error, CurrencyNotFoundError):
+        print(error)
+        print("Введите help get-rate для справки и списка поддерживаемых кодов.")
+        print(f"Поддерживаемые коды: {', '.join(supported_codes())}")
+        return
+    if isinstance(error, ApiRequestError):
+        print(error)
+        print("Повторите попытку позже и проверьте подключение к сети.")
+        return
+    print(error)
+
+
 def run() -> None:
     global current_user
     initialize_storage()
@@ -97,7 +175,8 @@ def run() -> None:
             if command == CMD_EXIT:
                 break
             if command == CMD_HELP:
-                help_command()
+                topic = command_args[0] if command_args else None
+                help_command(topic)
             elif command == CMD_REGISTER:
                 parsed = parse_named_args(
                     command_args, required=("--username", "--password")
@@ -155,5 +234,10 @@ def run() -> None:
                 print(get_rate(parsed["--from"], parsed["--to"]))
             else:
                 print(f"Неизвестная команда: {command}. Введите help для справки.")
-        except ValueError as error:
-            print(error)
+        except (
+            InsufficientFundsError,
+            CurrencyNotFoundError,
+            ApiRequestError,
+            ValueError,
+        ) as error:
+            handle_command_error(error)

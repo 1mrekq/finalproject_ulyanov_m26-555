@@ -2,7 +2,9 @@ import re
 from abc import ABC, abstractmethod
 from datetime import datetime
 
+from valutatrade_hub.core.exceptions import InsufficientFundsError
 from valutatrade_hub.core.utils import (
+    format_amount,
     format_datetime,
     hash_password,
     is_positive_number,
@@ -126,9 +128,10 @@ class Wallet:
             raise ValueError("'amount' должен быть положительным числом")
         amount = float(amount)
         if amount > self._balance:
-            raise ValueError(
-                f"Недостаточно средств: доступно {self._balance} "
-                f"{self.currency_code}, требуется {amount} {self.currency_code}"
+            raise InsufficientFundsError(
+                available=format_amount(self.currency_code, self._balance),
+                required=format_amount(self.currency_code, amount),
+                code=self.currency_code,
             )
         self.balance = self._balance - amount
 
@@ -247,9 +250,7 @@ class Currency(ABC):
     def code(self, value: str) -> None:
         normalized = normalize_currency(value)
         if not re.fullmatch(r"[A-Z0-9]{2,5}", normalized):
-            raise ValueError(
-                "Код валюты должен содержать 2–5 символов без пробелов"
-            )
+            raise ValueError("Код валюты должен содержать 2–5 символов без пробелов")
         self._code = normalized
 
     @abstractmethod
@@ -273,10 +274,7 @@ class FiatCurrency(Currency):
         self._issuing_country = value.strip()
 
     def get_display_info(self) -> str:
-        return (
-            f"[FIAT] {self.code} — {self.name} "
-            f"(Issuing: {self.issuing_country})"
-        )
+        return f"[FIAT] {self.code} — {self.name} (Issuing: {self.issuing_country})"
 
 
 class CryptoCurrency(Currency):
@@ -310,6 +308,5 @@ class CryptoCurrency(Currency):
     def get_display_info(self) -> str:
         mcap = f"{self.market_cap:.2e}".replace("e+", "e")
         return (
-            f"[CRYPTO] {self.code} — {self.name} "
-            f"(Algo: {self.algorithm}, MCAP: {mcap})"
+            f"[CRYPTO] {self.code} — {self.name} (Algo: {self.algorithm}, MCAP: {mcap})"
         )

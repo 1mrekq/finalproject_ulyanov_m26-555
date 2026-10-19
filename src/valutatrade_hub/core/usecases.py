@@ -1,6 +1,8 @@
 from datetime import datetime
 
 from valutatrade_hub.core.constants import BASE_CURRENCY, RATE_TTL, STUB_RATES
+from valutatrade_hub.core.currencies import get_currency
+from valutatrade_hub.core.exceptions import ApiRequestError
 from valutatrade_hub.core.models import Portfolio, User
 from valutatrade_hub.core.storage import (
     find_portfolio,
@@ -144,13 +146,14 @@ def resolve_rate(from_code: str, to_code: str) -> tuple[float, str, float]:
         needs_refresh = not stamp or not _is_fresh(stamp)
 
     if needs_refresh:
-        rates = _refresh_rates_from_stub(rates)
+        try:
+            rates = _refresh_rates_from_stub(rates)
+        except OSError as error:
+            raise ApiRequestError(str(error)) from error
         found = lookup(rates)
 
     if not found:
-        raise ValueError(
-            f"Курс {from_code}→{to_code} недоступен. Повторите попытку позже."
-        )
+        raise ApiRequestError(f"курс {from_code}→{to_code} недоступен")
     return found
 
 
@@ -213,14 +216,14 @@ def _quote_or_error(currency_code: str) -> float:
     try:
         rate, _stamp, _reverse = resolve_rate(currency_code, BASE_CURRENCY)
         return rate
-    except ValueError:
-        raise ValueError(
-            f"Не удалось получить курс для {currency_code}→{BASE_CURRENCY}"
-        ) from None
+    except ApiRequestError as error:
+        raise ApiRequestError(
+            f"не удалось получить курс для {currency_code}→{BASE_CURRENCY}"
+        ) from error
 
 
 def buy(user: User, currency_code: str, amount) -> str:
-    code = normalize_currency(currency_code)
+    code = get_currency(currency_code).code
     qty = parse_amount(amount)
     portfolio = _require_portfolio(user)
     rate = _quote_or_error(code)
@@ -228,13 +231,6 @@ def buy(user: User, currency_code: str, amount) -> str:
 
     usd_wallet = portfolio.get_or_create_wallet(BASE_CURRENCY)
     if code != BASE_CURRENCY:
-        available = usd_wallet.balance
-        if cost > available:
-            available_text = format_amount(BASE_CURRENCY, available)
-            raise ValueError(
-                f"Недостаточно средств: доступно {available_text} "
-                f"{BASE_CURRENCY}, требуется {cost:.2f} {BASE_CURRENCY}"
-            )
         usd_wallet.withdraw(cost)
 
     wallet = portfolio.get_or_create_wallet(code)
@@ -253,7 +249,7 @@ def buy(user: User, currency_code: str, amount) -> str:
 
 
 def sell(user: User, currency_code: str, amount) -> str:
-    code = normalize_currency(currency_code)
+    code = get_currency(currency_code).code
     qty = parse_amount(amount)
     portfolio = _require_portfolio(user)
     wallet = portfolio.get_wallet(code)
@@ -261,11 +257,6 @@ def sell(user: User, currency_code: str, amount) -> str:
         raise ValueError(
             f"У вас нет кошелька '{code}'. Добавьте валюту: "
             "она создаётся автоматически при первой покупке."
-        )
-    if qty > wallet.balance:
-        raise ValueError(
-            f"Недостаточно средств: доступно {format_amount(code, wallet.balance)} "
-            f"{code}, требуется {format_amount(code, qty)} {code}"
         )
 
     rate = _quote_or_error(code)
@@ -288,8 +279,8 @@ def sell(user: User, currency_code: str, amount) -> str:
 
 
 def get_rate(from_code: str, to_code: str) -> str:
-    source = normalize_currency(from_code)
-    target = normalize_currency(to_code)
+    source = get_currency(from_code).code
+    target = get_currency(to_code).code
     rate, stamp, reverse = resolve_rate(source, target)
     try:
         shown = parse_datetime(stamp).strftime("%Y-%m-%d %H:%M:%S")
