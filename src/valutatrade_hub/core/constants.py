@@ -1,14 +1,3 @@
-from datetime import timedelta
-from pathlib import Path
-
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-DATA_DIR = PROJECT_ROOT / "data"
-USERS_FILE = DATA_DIR / "users.json"
-PORTFOLIOS_FILE = DATA_DIR / "portfolios.json"
-RATES_FILE = DATA_DIR / "rates.json"
-
-RATE_TTL = timedelta(minutes=5)
-BASE_CURRENCY = "USD"
 CRYPTO_CODES = {"BTC", "ETH"}
 
 DEFAULT_RATES = {

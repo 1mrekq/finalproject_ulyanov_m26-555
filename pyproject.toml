@@ -18,6 +18,16 @@ valutatrade-hub = "valutatrade_hub:main"
 requires = ["uv_build>=0.12.22,<0.13.0"]
 build-backend = "uv_build"
 
+[tool.valutatrade]
+data_dir = "data"
+users_file = "data/users.json"
+portfolios_file = "data/portfolios.json"
+rates_file = "data/rates.json"
+rates_ttl_seconds = 300
+base_currency = "USD"
+log_file = "logs/valutatrade.log"
+log_format = "%(asctime)s %(levelname)s %(name)s: %(message)s"
+
 [tool.ruff]
 line-length = 88
 target-version = "py312"

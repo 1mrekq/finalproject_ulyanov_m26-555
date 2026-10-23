@@ -1,9 +1,10 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 
-from valutatrade_hub.core.constants import BASE_CURRENCY, RATE_TTL, STUB_RATES
+from valutatrade_hub.core.constants import STUB_RATES
 from valutatrade_hub.core.currencies import get_currency
 from valutatrade_hub.core.exceptions import ApiRequestError
 from valutatrade_hub.core.models import Portfolio, User
+from valutatrade_hub.core.settings import SettingsLoader
 from valutatrade_hub.core.storage import (
     find_portfolio,
     find_user_by_username,
@@ -24,6 +25,15 @@ from valutatrade_hub.core.utils import (
 )
 
 META_KEYS = {"source", "last_refresh"}
+_settings = SettingsLoader()
+
+
+def _base_currency() -> str:
+    return _settings.get("base_currency", "USD")
+
+
+def _rate_ttl() -> timedelta:
+    return timedelta(seconds=_settings.get("rates_ttl_seconds", 300))
 
 
 def register_user(username: str, password: str) -> int:
@@ -83,7 +93,7 @@ def _is_fresh(updated_at: str) -> bool:
         updated = parse_datetime(updated_at)
     except ValueError:
         return False
-    return datetime.now() - updated <= RATE_TTL
+    return datetime.now() - updated <= _rate_ttl()
 
 
 def _refresh_rates_from_stub(rates: dict) -> dict:
@@ -98,15 +108,16 @@ def _refresh_rates_from_stub(rates: dict) -> dict:
 
 
 def _usd_rate(rates: dict, currency_code: str) -> float | None:
-    if currency_code == BASE_CURRENCY:
+    base = _base_currency()
+    if currency_code == base:
         return 1.0
-    direct = _pair_payload(rates, currency_code, BASE_CURRENCY)
+    direct = _pair_payload(rates, currency_code, base)
     if direct:
         return float(direct["rate"])
-    inverse = _pair_payload(rates, BASE_CURRENCY, currency_code)
+    inverse = _pair_payload(rates, base, currency_code)
     if inverse and float(inverse["rate"]) != 0:
         return 1.0 / float(inverse["rate"])
-    return STUB_RATES.get(f"{currency_code}_{BASE_CURRENCY}")
+    return STUB_RATES.get(f"{currency_code}_{base}")
 
 
 def resolve_rate(from_code: str, to_code: str) -> tuple[float, str, float]:
@@ -159,26 +170,27 @@ def resolve_rate(from_code: str, to_code: str) -> tuple[float, str, float]:
 
 def rates_to_usd_map() -> dict[str, float]:
     rates = load_rates()
-    converted = {BASE_CURRENCY: 1.0}
+    base = _base_currency()
+    converted = {base: 1.0}
     for key, payload in rates.items():
         if key in META_KEYS or not isinstance(payload, dict) or "rate" not in payload:
             continue
         if "_" not in key:
             continue
         source, target = key.split("_", 1)
-        if target == BASE_CURRENCY:
+        if target == base:
             converted[source] = float(payload["rate"])
-        elif source == BASE_CURRENCY and float(payload["rate"]) != 0:
+        elif source == base and float(payload["rate"]) != 0:
             converted[target] = 1.0 / float(payload["rate"])
     for pair, rate in STUB_RATES.items():
         source, target = pair.split("_", 1)
-        if target == BASE_CURRENCY:
+        if target == base:
             converted.setdefault(source, rate)
     return converted
 
 
-def show_portfolio(user: User, base_currency: str = BASE_CURRENCY) -> str:
-    base = normalize_currency(base_currency)
+def show_portfolio(user: User, base_currency: str | None = None) -> str:
+    base = normalize_currency(base_currency or _base_currency())
     portfolio = _require_portfolio(user)
     usd_rates = rates_to_usd_map()
     if base not in usd_rates:
@@ -213,12 +225,13 @@ def show_portfolio(user: User, base_currency: str = BASE_CURRENCY) -> str:
 
 
 def _quote_or_error(currency_code: str) -> float:
+    base = _base_currency()
     try:
-        rate, _stamp, _reverse = resolve_rate(currency_code, BASE_CURRENCY)
+        rate, _stamp, _reverse = resolve_rate(currency_code, base)
         return rate
     except ApiRequestError as error:
         raise ApiRequestError(
-            f"не удалось получить курс для {currency_code}→{BASE_CURRENCY}"
+            f"не удалось получить курс для {currency_code}→{base}"
         ) from error
 
 
@@ -229,8 +242,9 @@ def buy(user: User, currency_code: str, amount) -> str:
     rate = _quote_or_error(code)
     cost = qty * rate
 
-    usd_wallet = portfolio.get_or_create_wallet(BASE_CURRENCY)
-    if code != BASE_CURRENCY:
+    base = _base_currency()
+    usd_wallet = portfolio.get_or_create_wallet(base)
+    if code != base:
         usd_wallet.withdraw(cost)
 
     wallet = portfolio.get_or_create_wallet(code)
@@ -240,11 +254,11 @@ def buy(user: User, currency_code: str, amount) -> str:
 
     return (
         f"Покупка выполнена: {format_amount(code, qty)} {code} "
-        f"по курсу {rate:.2f} {BASE_CURRENCY}/{code}\n"
+        f"по курсу {rate:.2f} {base}/{code}\n"
         f"Изменения в портфеле:\n"
         f"- {code}: было {format_amount(code, before)} → "
         f"стало {format_amount(code, wallet.balance)}\n"
-        f"Оценочная стоимость покупки: {cost:,.2f} {BASE_CURRENCY}"
+        f"Оценочная стоимость покупки: {cost:,.2f} {base}"
     )
 
 
@@ -263,18 +277,19 @@ def sell(user: User, currency_code: str, amount) -> str:
     revenue = qty * rate
     before = wallet.balance
     wallet.withdraw(qty)
-    if code != BASE_CURRENCY:
-        usd_wallet = portfolio.get_or_create_wallet(BASE_CURRENCY)
+    base = _base_currency()
+    if code != base:
+        usd_wallet = portfolio.get_or_create_wallet(base)
         usd_wallet.deposit(revenue)
     upsert_portfolio(portfolio)
 
     return (
         f"Продажа выполнена: {format_amount(code, qty)} {code} "
-        f"по курсу {rate:.2f} {BASE_CURRENCY}/{code}\n"
+        f"по курсу {rate:.2f} {base}/{code}\n"
         f"Изменения в портфеле:\n"
         f"- {code}: было {format_amount(code, before)} → "
         f"стало {format_amount(code, wallet.balance)}\n"
-        f"Оценочная выручка: {revenue:,.2f} {BASE_CURRENCY}"
+        f"Оценочная выручка: {revenue:,.2f} {base}"
     )
 
 
