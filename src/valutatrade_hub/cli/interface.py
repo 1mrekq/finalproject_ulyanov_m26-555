@@ -1,6 +1,6 @@
 import shlex
 
-from valutatrade_hub.core.currencies import supported_codes
+from valutatrade_hub.core.currencies import get_currency, supported_codes
 from valutatrade_hub.core.exceptions import (
     ApiRequestError,
     CurrencyNotFoundError,
@@ -25,16 +25,13 @@ CMD_SHOW_PORTFOLIO = "show-portfolio"
 CMD_BUY = "buy"
 CMD_SELL = "sell"
 CMD_GET_RATE = "get-rate"
+CMD_CURRENCIES = "currencies"
 
 FUNDS_ERROR = (
     "Недостаточно средств: доступно {available} {code}, требуется {required} {code}"
 )
 API_ERROR = "Ошибка при обращении к внешнему API: {reason}"
 UNKNOWN_CURRENCY_ERROR = "Неизвестная валюта '<code>'"
-MISSING_WALLET_ERROR = (
-    "У вас нет кошелька 'BTC'. Добавьте валюту: "
-    "она создаётся автоматически при первой покупке."
-)
 
 COMMAND_ERRORS = {
     CMD_REGISTER: (
@@ -47,7 +44,8 @@ COMMAND_ERRORS = {
     ),
     CMD_SHOW_PORTFOLIO: (
         "Сначала выполните login",
-        "Неизвестная базовая валюта 'ABC'",
+        UNKNOWN_CURRENCY_ERROR,
+        API_ERROR,
     ),
     CMD_BUY: (
         "'amount' должен быть положительным числом",
@@ -56,9 +54,9 @@ COMMAND_ERRORS = {
         API_ERROR,
     ),
     CMD_SELL: (
-        MISSING_WALLET_ERROR,
-        FUNDS_ERROR,
+        "'amount' должен быть положительным числом",
         UNKNOWN_CURRENCY_ERROR,
+        FUNDS_ERROR,
         API_ERROR,
     ),
     CMD_GET_RATE: (
@@ -79,6 +77,7 @@ def help_command(topic: str | None = None) -> None:
         print("  buy --currency <str> --amount <float>")
         print("  sell --currency <str> --amount <float>")
         print("  get-rate --from <str> --to <str>")
+        print("  currencies")
         print("  help [команда]")
         print("  exit")
         print("Подробности и раздел «Ошибки»: help get-rate")
@@ -133,18 +132,23 @@ def require_login():
     return current_user
 
 
-def handle_command_error(error: Exception) -> None:
+def handle_command_error(error: Exception, command: str | None = None) -> None:
     if isinstance(error, InsufficientFundsError):
-        print(error)
+        print(
+            f"Недостаточно средств: доступно {error.available} {error.code}, "
+            f"требуется {error.required} {error.code}"
+        )
         return
     if isinstance(error, CurrencyNotFoundError):
-        print(error)
+        print(f"Неизвестная валюта '{error.code}'")
         print("Введите help get-rate для справки и списка поддерживаемых кодов.")
-        print(f"Поддерживаемые коды: {', '.join(supported_codes())}")
+        if command == CMD_GET_RATE:
+            print(f"Поддерживаемые коды: {', '.join(supported_codes())}")
         return
     if isinstance(error, ApiRequestError):
-        print(error)
-        print("Повторите попытку позже и проверьте подключение к сети.")
+        print(f"Ошибка при обращении к внешнему API: {error.reason}")
+        if command == CMD_GET_RATE:
+            print("Повторите попытку позже и проверьте подключение к сети.")
         return
     print(error)
 
@@ -234,6 +238,10 @@ def run() -> None:
                     print_invalid_value(user_input, command_args)
                     continue
                 print(get_rate(parsed["--from"], parsed["--to"]))
+            elif command == CMD_CURRENCIES:
+                print("Поддерживаемые валюты:")
+                for code in supported_codes():
+                    print(f"  {get_currency(code).get_display_info()}")
             else:
                 print(f"Неизвестная команда: {command}. Введите help для справки.")
         except (
@@ -242,4 +250,4 @@ def run() -> None:
             ApiRequestError,
             ValueError,
         ) as error:
-            handle_command_error(error)
+            handle_command_error(error, command)

@@ -3,16 +3,20 @@ from datetime import datetime, timedelta
 from valutatrade_hub.core.constants import STUB_RATES
 from valutatrade_hub.core.currencies import get_currency
 from valutatrade_hub.core.decorators import log_action, update_action_log
-from valutatrade_hub.core.exceptions import ApiRequestError
+from valutatrade_hub.core.exceptions import (
+    ApiRequestError,
+    CurrencyNotFoundError,
+    InsufficientFundsError,
+)
 from valutatrade_hub.core.models import Portfolio, User
 from valutatrade_hub.core.settings import SettingsLoader
 from valutatrade_hub.core.storage import (
     find_portfolio,
     find_user_by_username,
     load_rates,
-    load_users,
-    save_rates,
-    save_users,
+    transact_portfolio,
+    transact_rates,
+    transact_users,
     upsert_portfolio,
 )
 from valutatrade_hub.core.utils import (
@@ -20,7 +24,6 @@ from valutatrade_hub.core.utils import (
     format_datetime,
     generate_salt,
     hash_password,
-    normalize_currency,
     parse_amount,
     parse_datetime,
 )
@@ -46,22 +49,25 @@ def register_user(username: str, password: str) -> int:
     if not isinstance(password, str) or len(password) < 4:
         raise ValueError("Пароль должен быть не короче 4 символов")
 
-    users = load_users()
-    if any(user.username == username for user in users):
-        raise ValueError(f"Имя пользователя '{username}' уже занято")
+    def create(users: list[User]) -> int:
+        if any(user.username == username for user in users):
+            raise ValueError(f"Имя пользователя '{username}' уже занято")
 
-    user_id = max((user.user_id for user in users), default=0) + 1
-    salt = generate_salt()
-    user = User(
-        user_id=user_id,
-        username=username,
-        hashed_password=hash_password(password, salt),
-        salt=salt,
-        registration_date=datetime.now().replace(microsecond=0),
-    )
-    users.append(user)
-    save_users(users)
-    upsert_portfolio(Portfolio(user_id=user_id, wallets={}))
+        new_id = max((user.user_id for user in users), default=0) + 1
+        salt = generate_salt()
+        users.append(
+            User(
+                user_id=new_id,
+                username=username,
+                hashed_password=hash_password(password, salt),
+                salt=salt,
+                registration_date=datetime.now().replace(microsecond=0),
+            )
+        )
+        return new_id
+
+    user_id = transact_users(create)
+    transact_portfolio(user_id, lambda portfolio: portfolio)
     update_action_log(user_id=user_id)
     return user_id
 
@@ -104,15 +110,20 @@ def _is_fresh(updated_at: str) -> bool:
     return datetime.now() - updated <= _rate_ttl()
 
 
-def _refresh_rates_from_stub(rates: dict) -> dict:
+def _apply_stub_rates(rates: dict) -> dict:
     now = format_datetime(datetime.now())
-    updated = dict(rates)
     for pair, rate in STUB_RATES.items():
-        updated[pair] = {"rate": rate, "updated_at": now}
-    updated["source"] = "ParserServiceStub"
-    updated["last_refresh"] = now
-    save_rates(updated)
-    return updated
+        rates[pair] = {"rate": rate, "updated_at": now}
+    rates["source"] = "ParserServiceStub"
+    rates["last_refresh"] = now
+    return rates
+
+
+def _refresh_rates_from_stub() -> dict:
+    try:
+        return transact_rates(_apply_stub_rates)
+    except OSError as error:
+        raise ApiRequestError(str(error)) from error
 
 
 def _usd_rate(rates: dict, currency_code: str) -> float | None:
@@ -129,8 +140,8 @@ def _usd_rate(rates: dict, currency_code: str) -> float | None:
 
 
 def resolve_rate(from_code: str, to_code: str) -> tuple[float, str, float]:
-    from_code = normalize_currency(from_code)
-    to_code = normalize_currency(to_code)
+    from_code = get_currency(from_code).code
+    to_code = get_currency(to_code).code
     rates = load_rates()
 
     def lookup(data: dict) -> tuple[float, str, float] | None:
@@ -165,10 +176,7 @@ def resolve_rate(from_code: str, to_code: str) -> tuple[float, str, float]:
         needs_refresh = not stamp or not _is_fresh(stamp)
 
     if needs_refresh:
-        try:
-            rates = _refresh_rates_from_stub(rates)
-        except OSError as error:
-            raise ApiRequestError(str(error)) from error
+        rates = _refresh_rates_from_stub()
         found = lookup(rates)
 
     if not found:
@@ -178,6 +186,9 @@ def resolve_rate(from_code: str, to_code: str) -> tuple[float, str, float]:
 
 def rates_to_usd_map() -> dict[str, float]:
     rates = load_rates()
+    stamp = rates.get("last_refresh")
+    if not isinstance(stamp, str) or not _is_fresh(stamp):
+        rates = _refresh_rates_from_stub()
     base = _base_currency()
     converted = {base: 1.0}
     for key, payload in rates.items():
@@ -198,11 +209,11 @@ def rates_to_usd_map() -> dict[str, float]:
 
 
 def show_portfolio(user: User, base_currency: str | None = None) -> str:
-    base = normalize_currency(base_currency or _base_currency())
+    base = get_currency(base_currency or _base_currency()).code
     portfolio = _require_portfolio(user)
     usd_rates = rates_to_usd_map()
     if base not in usd_rates:
-        raise ValueError(f"Неизвестная базовая валюта '{base}'")
+        raise CurrencyNotFoundError(base)
 
     header = f"Портфель пользователя '{user.username}' (база: {base}):"
     if not portfolio.wallets:
@@ -212,7 +223,7 @@ def show_portfolio(user: User, base_currency: str | None = None) -> str:
     total = 0.0
     for code, wallet in portfolio.wallets.items():
         if code not in usd_rates:
-            raise ValueError(f"Не удалось получить курс для {code}→{base}")
+            raise ApiRequestError(f"не удалось получить курс для {code}→{base}")
         value = wallet.balance * usd_rates[code] / usd_rates[base]
         total += value
         rows.append(
@@ -251,32 +262,35 @@ def buy(user: User, currency_code: str, amount) -> str:
         currency_code=currency_code,
         amount=amount,
     )
-    code = get_currency(currency_code).code
+    currency = get_currency(currency_code)
+    code = currency.code
     qty = parse_amount(amount)
     update_action_log(currency_code=code, amount=qty)
-    portfolio = _require_portfolio(user)
     rate = _quote_or_error(code)
     cost = qty * rate
-
     base = _base_currency()
     update_action_log(rate=rate, base=base)
-    usd_wallet = portfolio.get_or_create_wallet(base)
-    if code != base:
-        usd_wallet.withdraw(cost)
 
-    wallet = portfolio.get_or_create_wallet(code)
-    before = wallet.balance
-    update_action_log(wallet_before=before)
-    wallet.deposit(qty)
-    upsert_portfolio(portfolio)
-    update_action_log(wallet_after=wallet.balance)
+    def apply(portfolio: Portfolio) -> tuple[float, float, bool]:
+        if code != base:
+            portfolio.get_or_create_wallet(base).withdraw(cost)
+        created = portfolio.get_wallet(code) is None
+        wallet = portfolio.get_or_create_wallet(code)
+        before = wallet.balance
+        wallet.deposit(qty)
+        return before, wallet.balance, created
 
+    before, after, created = transact_portfolio(user.user_id, apply, user=user)
+    update_action_log(wallet_before=before, wallet_after=after)
+
+    created_line = f"Кошелёк {code} создан автоматически.\n" if created else ""
     return (
         f"Покупка выполнена: {format_amount(code, qty)} {code} "
-        f"по курсу {rate:.2f} {base}/{code}\n"
+        f"({currency.name}) по курсу {rate:.2f} {base}/{code}\n"
+        f"{created_line}"
         f"Изменения в портфеле:\n"
         f"- {code}: было {format_amount(code, before)} → "
-        f"стало {format_amount(code, wallet.balance)}\n"
+        f"стало {format_amount(code, after)}\n"
         f"Оценочная стоимость покупки: {cost:,.2f} {base}"
     )
 
@@ -289,35 +303,37 @@ def sell(user: User, currency_code: str, amount) -> str:
         currency_code=currency_code,
         amount=amount,
     )
-    code = get_currency(currency_code).code
+    currency = get_currency(currency_code)
+    code = currency.code
     qty = parse_amount(amount)
     update_action_log(currency_code=code, amount=qty)
-    portfolio = _require_portfolio(user)
-    wallet = portfolio.get_wallet(code)
-    if wallet is None:
-        raise ValueError(
-            f"У вас нет кошелька '{code}'. Добавьте валюту: "
-            "она создаётся автоматически при первой покупке."
-        )
-
     rate = _quote_or_error(code)
     revenue = qty * rate
-    before = wallet.balance
-    update_action_log(rate=rate, base=_base_currency(), wallet_before=before)
-    wallet.withdraw(qty)
     base = _base_currency()
-    if code != base:
-        usd_wallet = portfolio.get_or_create_wallet(base)
-        usd_wallet.deposit(revenue)
-    upsert_portfolio(portfolio)
-    update_action_log(wallet_after=wallet.balance)
+
+    def apply(portfolio: Portfolio) -> tuple[float, float]:
+        wallet = portfolio.get_wallet(code)
+        if wallet is None:
+            raise InsufficientFundsError(
+                available=format_amount(code, 0),
+                required=format_amount(code, qty),
+                code=code,
+            )
+        before = wallet.balance
+        wallet.withdraw(qty)
+        if code != base:
+            portfolio.get_or_create_wallet(base).deposit(revenue)
+        return before, wallet.balance
+
+    before, after = transact_portfolio(user.user_id, apply, user=user)
+    update_action_log(rate=rate, base=base, wallet_before=before, wallet_after=after)
 
     return (
         f"Продажа выполнена: {format_amount(code, qty)} {code} "
-        f"по курсу {rate:.2f} {base}/{code}\n"
+        f"({currency.name}) по курсу {rate:.2f} {base}/{code}\n"
         f"Изменения в портфеле:\n"
         f"- {code}: было {format_amount(code, before)} → "
-        f"стало {format_amount(code, wallet.balance)}\n"
+        f"стало {format_amount(code, after)}\n"
         f"Оценочная выручка: {revenue:,.2f} {base}"
     )
 

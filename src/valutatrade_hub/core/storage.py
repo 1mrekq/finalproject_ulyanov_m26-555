@@ -1,9 +1,13 @@
 import json
+from collections.abc import Callable
 from pathlib import Path
+from typing import TypeVar
 
 from valutatrade_hub.core.constants import DEFAULT_RATES
 from valutatrade_hub.core.models import Portfolio, User
 from valutatrade_hub.core.settings import SettingsLoader
+
+T = TypeVar("T")
 
 _settings = SettingsLoader()
 
@@ -88,6 +92,44 @@ def upsert_portfolio(portfolio: Portfolio) -> None:
     if not updated:
         portfolios.append(portfolio)
     save_portfolios(portfolios)
+
+
+def transact_users(callback: Callable[[list[User]], T]) -> T:
+    users = load_users()
+    result = callback(users)
+    save_users(users)
+    return result
+
+
+def transact_portfolio(
+    user_id: int,
+    callback: Callable[[Portfolio], T],
+    user: User | None = None,
+) -> T:
+    portfolios = load_portfolios()
+    index = next(
+        (i for i, item in enumerate(portfolios) if item.user_id == user_id),
+        None,
+    )
+    if index is None:
+        portfolio = Portfolio(user_id=user_id, wallets={}, user=user)
+        portfolios.append(portfolio)
+        index = len(portfolios) - 1
+    else:
+        current = portfolios[index]
+        portfolio = Portfolio(user_id, current.wallets, user=user or current.user)
+        portfolios[index] = portfolio
+
+    result = callback(portfolio)
+    save_portfolios(portfolios)
+    return result
+
+
+def transact_rates(callback: Callable[[dict], T]) -> T:
+    rates = load_rates()
+    result = callback(rates)
+    save_rates(rates)
+    return result
 
 
 def load_rates() -> dict:
