@@ -6,6 +6,7 @@ from valutatrade_hub.core.exceptions import (
     CurrencyNotFoundError,
     InsufficientFundsError,
 )
+from valutatrade_hub.core.logging_config import setup_logging
 from valutatrade_hub.core.storage import initialize_storage
 from valutatrade_hub.core.usecases import (
     buy,
@@ -151,6 +152,7 @@ def handle_command_error(error: Exception) -> None:
 def run() -> None:
     global current_user
     initialize_storage()
+    setup_logging()
     help_command()
 
     while True:

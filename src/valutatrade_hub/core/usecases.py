@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 
 from valutatrade_hub.core.constants import STUB_RATES
 from valutatrade_hub.core.currencies import get_currency
+from valutatrade_hub.core.decorators import log_action, update_action_log
 from valutatrade_hub.core.exceptions import ApiRequestError
 from valutatrade_hub.core.models import Portfolio, User
 from valutatrade_hub.core.settings import SettingsLoader
@@ -36,10 +37,12 @@ def _rate_ttl() -> timedelta:
     return timedelta(seconds=_settings.get("rates_ttl_seconds", 300))
 
 
+@log_action("REGISTER")
 def register_user(username: str, password: str) -> int:
     if not isinstance(username, str) or not username.strip():
         raise ValueError("Имя не может быть пустым")
     username = username.strip()
+    update_action_log(username=username)
     if not isinstance(password, str) or len(password) < 4:
         raise ValueError("Пароль должен быть не короче 4 символов")
 
@@ -59,15 +62,20 @@ def register_user(username: str, password: str) -> int:
     users.append(user)
     save_users(users)
     upsert_portfolio(Portfolio(user_id=user_id, wallets={}))
+    update_action_log(user_id=user_id)
     return user_id
 
 
+@log_action("LOGIN")
 def login_user(username: str, password: str) -> User:
-    user = find_user_by_username(username.strip() if isinstance(username, str) else "")
+    name = username.strip() if isinstance(username, str) else ""
+    update_action_log(username=name)
+    user = find_user_by_username(name)
     if user is None:
         raise ValueError(f"Пользователь '{username}' не найден")
     if not user.verify_password(password):
         raise ValueError("Неверный пароль")
+    update_action_log(user_id=user.user_id)
     return user
 
 
@@ -235,22 +243,33 @@ def _quote_or_error(currency_code: str) -> float:
         ) from error
 
 
+@log_action("BUY", verbose=True)
 def buy(user: User, currency_code: str, amount) -> str:
+    update_action_log(
+        username=user.username,
+        user_id=user.user_id,
+        currency_code=currency_code,
+        amount=amount,
+    )
     code = get_currency(currency_code).code
     qty = parse_amount(amount)
+    update_action_log(currency_code=code, amount=qty)
     portfolio = _require_portfolio(user)
     rate = _quote_or_error(code)
     cost = qty * rate
 
     base = _base_currency()
+    update_action_log(rate=rate, base=base)
     usd_wallet = portfolio.get_or_create_wallet(base)
     if code != base:
         usd_wallet.withdraw(cost)
 
     wallet = portfolio.get_or_create_wallet(code)
     before = wallet.balance
+    update_action_log(wallet_before=before)
     wallet.deposit(qty)
     upsert_portfolio(portfolio)
+    update_action_log(wallet_after=wallet.balance)
 
     return (
         f"Покупка выполнена: {format_amount(code, qty)} {code} "
@@ -262,9 +281,17 @@ def buy(user: User, currency_code: str, amount) -> str:
     )
 
 
+@log_action("SELL", verbose=True)
 def sell(user: User, currency_code: str, amount) -> str:
+    update_action_log(
+        username=user.username,
+        user_id=user.user_id,
+        currency_code=currency_code,
+        amount=amount,
+    )
     code = get_currency(currency_code).code
     qty = parse_amount(amount)
+    update_action_log(currency_code=code, amount=qty)
     portfolio = _require_portfolio(user)
     wallet = portfolio.get_wallet(code)
     if wallet is None:
@@ -276,12 +303,14 @@ def sell(user: User, currency_code: str, amount) -> str:
     rate = _quote_or_error(code)
     revenue = qty * rate
     before = wallet.balance
+    update_action_log(rate=rate, base=_base_currency(), wallet_before=before)
     wallet.withdraw(qty)
     base = _base_currency()
     if code != base:
         usd_wallet = portfolio.get_or_create_wallet(base)
         usd_wallet.deposit(revenue)
     upsert_portfolio(portfolio)
+    update_action_log(wallet_after=wallet.balance)
 
     return (
         f"Продажа выполнена: {format_amount(code, qty)} {code} "

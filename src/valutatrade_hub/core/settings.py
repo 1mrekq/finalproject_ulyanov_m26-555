@@ -1,9 +1,8 @@
 from __future__ import annotations
 
+import tomllib
 from pathlib import Path
 from typing import Any
-
-import tomllib
 
 _DEFAULTS: dict[str, Any] = {
     "data_dir": "data",
@@ -12,8 +11,11 @@ _DEFAULTS: dict[str, Any] = {
     "rates_file": "data/rates.json",
     "rates_ttl_seconds": 300,
     "base_currency": "USD",
-    "log_file": "logs/valutatrade.log",
-    "log_format": "%(asctime)s %(levelname)s %(name)s: %(message)s",
+    "log_file": "logs/actions.log",
+    "log_level": "INFO",
+    "log_max_bytes": 1_048_576,
+    "log_backup_count": 5,
+    "log_format": "%(levelname)s %(message)s",
 }
 
 _PATH_KEYS = {
@@ -59,8 +61,10 @@ class SettingsLoader:
             if not path.is_absolute():
                 path = self._root / path
             return path
-        if key == "rates_ttl_seconds":
+        if key in {"rates_ttl_seconds", "log_max_bytes", "log_backup_count"}:
             return int(value)
         if key == "base_currency":
+            return str(value).upper()
+        if key == "log_level":
             return str(value).upper()
         return value
