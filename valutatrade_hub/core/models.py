@@ -1,5 +1,6 @@
 from datetime import datetime
 
+from valutatrade_hub.core.constants import DEFAULT_BASE_CURRENCY, MIN_PASSWORD_LENGTH
 from valutatrade_hub.core.exceptions import InsufficientFundsError
 from valutatrade_hub.core.utils import (
     format_amount,
@@ -12,6 +13,8 @@ from valutatrade_hub.core.utils import (
 
 
 class User:
+    """Пользователь системы: приватный хеш пароля с солью, без хранения plaintext."""
+
     def __init__(
         self,
         user_id: int,
@@ -61,18 +64,26 @@ class User:
         return self._registration_date
 
     def get_user_info(self) -> dict:
+        """Публичные сведения о пользователе без пароля, соли и хеша."""
         return {
             "user_id": self._user_id,
             "username": self._username,
             "registration_date": format_datetime(self._registration_date),
         }
 
-    def change_password(self, new_password: str) -> None:
-        if not isinstance(new_password, str):
+    @staticmethod
+    def validate_password(password: str) -> str:
+        if not isinstance(password, str):
             raise ValueError("Пароль должен быть строкой")
-        if len(new_password) < 4:
-            raise ValueError("Пароль должен быть не короче 4 символов")
-        self._hashed_password = hash_password(new_password, self._salt)
+        if len(password) < MIN_PASSWORD_LENGTH:
+            raise ValueError(
+                f"Пароль должен быть не короче {MIN_PASSWORD_LENGTH} символов"
+            )
+        return password
+
+    def change_password(self, new_password: str) -> None:
+        password = self.validate_password(new_password)
+        self._hashed_password = hash_password(password, self._salt)
 
     def verify_password(self, password: str) -> bool:
         if not isinstance(password, str):
@@ -100,6 +111,8 @@ class User:
 
 
 class Wallet:
+    """Кошелёк одной валюты: баланс неотрицательный, списание проверяет остаток."""
+
     def __init__(self, currency_code: str, balance: float = 0.0):
         self.currency_code = currency_code
         self.balance = balance
@@ -142,7 +155,9 @@ class Wallet:
         self.balance = self._balance - amount
 
     def get_balance_info(self) -> str:
-        return f"{self._balance} {self.currency_code}"
+        """Человекочитаемый баланс, например ``0.0100 BTC``."""
+        amount = format_amount(self.currency_code, self._balance)
+        return f"{amount} {self.currency_code}"
 
     def to_dict(self) -> dict:
         return {
@@ -157,6 +172,8 @@ class Wallet:
 
 
 class Portfolio:
+    """Набор кошельков пользователя: уникальность валют и оценка в базовой валюте."""
+
     def __init__(
         self,
         user_id: int,
@@ -180,6 +197,7 @@ class Portfolio:
         return self._wallets.copy()
 
     def add_currency(self, currency_code: str) -> Wallet:
+        """Создаёт кошелёк, если валюты ещё нет в портфеле."""
         code = normalize_currency(currency_code)
         if code in self._wallets:
             raise ValueError(f"Данная валюта уже существует в кошельке: '{code}'")
@@ -199,7 +217,7 @@ class Portfolio:
 
     def get_total_value(
         self,
-        base_currency: str = "USD",
+        base_currency: str = DEFAULT_BASE_CURRENCY,
         exchange_rates: dict[str, float] | None = None,
     ) -> float:
         base = normalize_currency(base_currency)

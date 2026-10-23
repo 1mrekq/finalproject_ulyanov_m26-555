@@ -241,8 +241,7 @@ def run() -> None:
                     print_invalid_value(user_input, command_args)
                     continue
                 user = require_login()
-                base = parsed.get("--base", "USD")
-                print(show_portfolio(user, base))
+                print(show_portfolio(user, parsed.get("--base")))
             elif command == CMD_BUY:
                 parsed = parse_named_args(
                     command_args, required=("--currency", "--amount")

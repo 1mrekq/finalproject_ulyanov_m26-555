@@ -1,4 +1,6 @@
 class InsufficientFundsError(Exception):
+    """Списание превышает доступный баланс кошелька."""
+
     def __init__(self, available, required, code: str):
         self.available = available
         self.required = required
@@ -10,12 +12,16 @@ class InsufficientFundsError(Exception):
 
 
 class CurrencyNotFoundError(Exception):
+    """Код валюты отсутствует в справочнике Core Service."""
+
     def __init__(self, code: str):
         self.code = code
         super().__init__(f"Неизвестная валюта '{code}'")
 
 
 class ApiRequestError(Exception):
+    """Сбой внешнего API или отсутствие котировки в локальном кэше."""
+
     def __init__(self, reason: str):
         self.reason = reason
         super().__init__(f"Ошибка при обращении к внешнему API: {reason}")

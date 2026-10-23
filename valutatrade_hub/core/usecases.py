@@ -1,5 +1,8 @@
 from datetime import datetime, timedelta
 
+from prettytable import PrettyTable
+
+from valutatrade_hub.core.constants import DEFAULT_BASE_CURRENCY
 from valutatrade_hub.core.currencies import get_currency
 from valutatrade_hub.core.exceptions import (
     ApiRequestError,
@@ -31,7 +34,7 @@ _db = DatabaseManager()
 
 
 def _base_currency() -> str:
-    return _settings.get("base_currency", "USD")
+    return _settings.get("base_currency", DEFAULT_BASE_CURRENCY)
 
 
 def _rate_ttl() -> timedelta:
@@ -40,12 +43,13 @@ def _rate_ttl() -> timedelta:
 
 @log_action("REGISTER")
 def register_user(username: str, password: str) -> int:
+    """Регистрирует пользователя и создаёт пустой портфель."""
+
     if not isinstance(username, str) or not username.strip():
         raise ValueError("Имя не может быть пустым")
     username = username.strip()
     update_action_log(username=username)
-    if not isinstance(password, str) or len(password) < 4:
-        raise ValueError("Пароль должен быть не короче 4 символов")
+    User.validate_password(password)
 
     def create(users: list[User]) -> int:
         if any(user.username == username for user in users):
@@ -72,6 +76,8 @@ def register_user(username: str, password: str) -> int:
 
 @log_action("LOGIN")
 def login_user(username: str, password: str) -> User:
+    """Проверяет пароль и возвращает пользователя сессии."""
+
     name = username.strip() if isinstance(username, str) else ""
     update_action_log(username=name)
     user = _db.find_user_by_username(name)
@@ -188,6 +194,8 @@ def rates_to_usd_map() -> dict[str, float]:
 
 
 def show_portfolio(user: User, base_currency: str | None = None) -> str:
+    """Сводка кошельков и оценка портфеля в выбранной базе."""
+
     base = get_currency(base_currency or _base_currency()).code
     portfolio = _require_portfolio(user)
     usd_rates = rates_to_usd_map()
@@ -198,28 +206,22 @@ def show_portfolio(user: User, base_currency: str | None = None) -> str:
     if not portfolio.wallets:
         return f"{header}\nПортфель пуст."
 
-    rows = []
-    total = 0.0
+    table = PrettyTable()
+    table.field_names = ["Валюта", "Баланс", f"Оценка, {base}"]
+    table.align = "r"
+    table.align["Валюта"] = "l"
     for code, wallet in portfolio.wallets.items():
         if code not in usd_rates:
             raise ApiRequestError(f"не удалось получить курс для {code}→{base}")
-        value = wallet.balance * usd_rates[code] / usd_rates[base]
-        total += value
-        rows.append(
-            (
+        table.add_row(
+            [
                 code,
-                format_amount(code, wallet.balance),
-                f"{value:.2f}",
-            )
+                wallet.get_balance_info(),
+                f"{wallet.balance * usd_rates[code] / usd_rates[base]:,.2f}",
+            ]
         )
-
-    lines = [header]
-    balance_width = max(len(balance) for _, balance, _ in rows)
-    for code, balance, value in rows:
-        lines.append(f"- {code}: {balance:>{balance_width}}  → {value} {base}")
-    lines.append("---------------------------------")
-    lines.append(f"ИТОГО: {total:,.2f} {base}")
-    return "\n".join(lines)
+    total = portfolio.get_total_value(base_currency=base, exchange_rates=usd_rates)
+    return f"{header}\n{table}\nИТОГО: {total:,.2f} {base}"
 
 
 def _quote_or_error(currency_code: str) -> float:
@@ -235,6 +237,8 @@ def _quote_or_error(currency_code: str) -> float:
 
 @log_action("BUY", verbose=True)
 def buy(user: User, currency_code: str, amount) -> str:
+    """Покупает валюту за базовую, при необходимости создаёт кошелёк."""
+
     update_action_log(
         username=user.username,
         user_id=user.user_id,
@@ -276,6 +280,8 @@ def buy(user: User, currency_code: str, amount) -> str:
 
 @log_action("SELL", verbose=True)
 def sell(user: User, currency_code: str, amount) -> str:
+    """Продаёт валюту в базовую и возвращает оценку выручки."""
+
     update_action_log(
         username=user.username,
         user_id=user.user_id,
@@ -318,6 +324,8 @@ def sell(user: User, currency_code: str, amount) -> str:
 
 
 def get_rate(from_code: str, to_code: str) -> str:
+    """Прямой и обратный курс пары из кэша с учётом TTL."""
+
     source = get_currency(from_code).code
     target = get_currency(to_code).code
     rate, stamp, reverse = resolve_rate(source, target)

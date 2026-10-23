@@ -1,4 +1,6 @@
 import json
+import os
+import tempfile
 from collections.abc import Callable
 from pathlib import Path
 from typing import Self, TypeVar
@@ -158,5 +160,19 @@ class DatabaseManager:
 
     def _save(self, filepath: Path, data) -> None:
         filepath.parent.mkdir(parents=True, exist_ok=True)
-        with open(filepath, "w", encoding="utf-8") as file:
-            json.dump(data, file, ensure_ascii=False, indent=2)
+        handle, tmp_name = tempfile.mkstemp(
+            dir=filepath.parent,
+            prefix=f".{filepath.name}.",
+            suffix=".tmp",
+        )
+        try:
+            with os.fdopen(handle, "w", encoding="utf-8") as file:
+                json.dump(data, file, ensure_ascii=False, indent=2)
+                file.write("\n")
+            os.replace(tmp_name, filepath)
+        except Exception:
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                pass
+            raise

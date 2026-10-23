@@ -16,7 +16,17 @@ def last_refresh_of(data: dict | None) -> str | None:
     return stamp if isinstance(stamp, str) and stamp else None
 
 
+def _is_newer(incoming, current) -> bool:
+    if not incoming:
+        return False
+    if not current:
+        return True
+    return str(incoming) >= str(current)
+
+
 class RatesStorage:
+    """Атомарная запись кэша rates.json и истории exchange_rates.json."""
+
     def __init__(
         self,
         config: ParserConfig | None = None,
@@ -45,7 +55,13 @@ class RatesStorage:
         current = extract_rate_pairs(self.load_cache())
         written = 0
         for quote in quotes:
-            current[quote.pair] = quote.to_cache_entry()
+            incoming = quote.to_cache_entry()
+            existing = current.get(quote.pair)
+            if isinstance(existing, dict) and not _is_newer(
+                incoming.get("updated_at"), existing.get("updated_at")
+            ):
+                continue
+            current[quote.pair] = incoming
             written += 1
         payload = {"pairs": current, "last_refresh": last_refresh}
         self._atomic_write(self.rates_path, payload)

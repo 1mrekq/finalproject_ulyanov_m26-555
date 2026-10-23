@@ -4,7 +4,7 @@ from pathlib import Path
 
 
 def _project_root() -> Path:
-    return Path(__file__).resolve().parents[3]
+    return Path(__file__).resolve().parents[2]
 
 
 def _load_env_file() -> None:
@@ -32,6 +32,8 @@ def _crypto_id_map() -> dict[str, str]:
 
 @dataclass
 class ParserConfig:
+    """Параметры Parser Service: ключ из env, списки валют, URL, таймаут и пути."""
+
     EXCHANGERATE_API_KEY: str = field(
         default_factory=lambda: os.getenv("EXCHANGERATE_API_KEY", "")
     )

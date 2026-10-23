@@ -1,3 +1,5 @@
+from prettytable import PrettyTable
+
 from valutatrade_hub.parser_service.config import ParserConfig
 from valutatrade_hub.parser_service.storage import (
     RatesStorage,
@@ -67,10 +69,13 @@ def format_show_rates(
         rows.sort(key=lambda item: item[0])
 
     stamp = last_refresh_of(cache) or "unknown"
-    lines = [f"Rates from cache (updated at {stamp}):"]
+    table = PrettyTable()
+    table.field_names = ["Пара", "Курс"]
+    table.align["Пара"] = "l"
+    table.align["Курс"] = "r"
     for pair, rate in rows:
-        lines.append(f"- {pair}: {_format_rate(rate)}")
-    return "\n".join(lines)
+        table.add_row([pair, _format_rate(rate)])
+    return f"Rates from cache (updated at {stamp}):\n{table}"
 
 
 def _usd_map(pairs: dict, base: str) -> dict[str, float]:

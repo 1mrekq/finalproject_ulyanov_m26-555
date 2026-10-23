@@ -1,4 +1,6 @@
+import json
 import logging
+from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 
 from valutatrade_hub.infra.settings import SettingsLoader
@@ -7,6 +9,24 @@ _LOGGER_NAME = "valutatrade_hub.actions"
 _PARSER_LOGGER_NAME = "valutatrade_hub.parser"
 _configured = False
 _parser_configured = False
+
+
+class JsonLogFormatter(logging.Formatter):
+    """Одна JSON-строка на событие: time, level, logger, message."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        payload = {
+            "time": datetime.fromtimestamp(record.created, tz=timezone.utc)
+            .replace(microsecond=0)
+            .isoformat()
+            .replace("+00:00", "Z"),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+        if record.exc_info:
+            payload["exception"] = self.formatException(record.exc_info)
+        return json.dumps(payload, ensure_ascii=False)
 
 
 def setup_logging() -> logging.Logger:
@@ -25,7 +45,7 @@ def setup_logging() -> logging.Logger:
         backupCount=int(settings.get("log_backup_count", 5)),
         encoding="utf-8",
     )
-    handler.setFormatter(logging.Formatter(settings.get("log_format")))
+    handler.setFormatter(_build_formatter(settings.get("log_format")))
     logger.setLevel(_resolve_level(settings.get("log_level", "INFO")))
     logger.addHandler(handler)
     logger.propagate = False
@@ -50,12 +70,21 @@ def setup_parser_logging() -> logging.Logger:
         backupCount=int(settings.get("log_backup_count", 5)),
         encoding="utf-8",
     )
-    handler.setFormatter(logging.Formatter(settings.get("log_format")))
+    handler.setFormatter(_build_formatter(settings.get("log_format")))
     logger.setLevel(_resolve_level(settings.get("log_level", "INFO")))
     logger.addHandler(handler)
     logger.propagate = False
     _parser_configured = True
     return logger
+
+
+def _build_formatter(log_format) -> logging.Formatter:
+    value = str(log_format or "text").strip().lower()
+    if value in {"json", "jsonl"}:
+        return JsonLogFormatter()
+    if value in {"text", "string", "str"}:
+        return logging.Formatter("%(levelname)s %(message)s")
+    return logging.Formatter(str(log_format))
 
 
 def _resolve_level(name: str) -> int:

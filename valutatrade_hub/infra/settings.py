@@ -15,7 +15,7 @@ _DEFAULTS: dict[str, Any] = {
     "log_level": "INFO",
     "log_max_bytes": 1_048_576,
     "log_backup_count": 5,
-    "log_format": "%(levelname)s %(message)s",
+    "log_format": "text",
 }
 
 _PATH_KEYS = {
@@ -42,7 +42,7 @@ class SettingsLoader:
     def __new__(cls) -> Self:
         if cls._instance is None:
             instance = super().__new__(cls)
-            instance._root = Path(__file__).resolve().parents[3]
+            instance._root = Path(__file__).resolve().parents[2]
             instance._config: dict[str, Any] = {}
             instance.reload()
             cls._instance = instance
