@@ -2,24 +2,14 @@ from datetime import datetime, timedelta
 
 from valutatrade_hub.core.constants import STUB_RATES
 from valutatrade_hub.core.currencies import get_currency
-from valutatrade_hub.core.decorators import log_action, update_action_log
 from valutatrade_hub.core.exceptions import (
     ApiRequestError,
     CurrencyNotFoundError,
     InsufficientFundsError,
 )
 from valutatrade_hub.core.models import Portfolio, User
-from valutatrade_hub.core.settings import SettingsLoader
-from valutatrade_hub.core.storage import (
-    find_portfolio,
-    find_user_by_username,
-    load_rates,
-    transact_portfolio,
-    transact_rates,
-    transact_users,
-    upsert_portfolio,
-)
 from valutatrade_hub.core.utils import (
+    convert_by_rate,
     format_amount,
     format_datetime,
     generate_salt,
@@ -27,9 +17,13 @@ from valutatrade_hub.core.utils import (
     parse_amount,
     parse_datetime,
 )
+from valutatrade_hub.decorators import log_action, update_action_log
+from valutatrade_hub.infra.database import DatabaseManager
+from valutatrade_hub.infra.settings import SettingsLoader
 
 META_KEYS = {"source", "last_refresh"}
 _settings = SettingsLoader()
+_db = DatabaseManager()
 
 
 def _base_currency() -> str:
@@ -66,8 +60,8 @@ def register_user(username: str, password: str) -> int:
         )
         return new_id
 
-    user_id = transact_users(create)
-    transact_portfolio(user_id, lambda portfolio: portfolio)
+    user_id = _db.transact_users(create)
+    _db.transact_portfolio(user_id, lambda portfolio: portfolio)
     update_action_log(user_id=user_id)
     return user_id
 
@@ -76,7 +70,7 @@ def register_user(username: str, password: str) -> int:
 def login_user(username: str, password: str) -> User:
     name = username.strip() if isinstance(username, str) else ""
     update_action_log(username=name)
-    user = find_user_by_username(name)
+    user = _db.find_user_by_username(name)
     if user is None:
         raise ValueError(f"Пользователь '{username}' не найден")
     if not user.verify_password(password):
@@ -86,10 +80,10 @@ def login_user(username: str, password: str) -> User:
 
 
 def _require_portfolio(user: User) -> Portfolio:
-    portfolio = find_portfolio(user.user_id)
+    portfolio = _db.find_portfolio(user.user_id)
     if portfolio is None:
         portfolio = Portfolio(user_id=user.user_id, wallets={}, user=user)
-        upsert_portfolio(portfolio)
+        _db.upsert_portfolio(portfolio)
         return portfolio
     return Portfolio(user.user_id, portfolio.wallets, user=user)
 
@@ -121,7 +115,7 @@ def _apply_stub_rates(rates: dict) -> dict:
 
 def _refresh_rates_from_stub() -> dict:
     try:
-        return transact_rates(_apply_stub_rates)
+        return _db.transact_rates(_apply_stub_rates)
     except OSError as error:
         raise ApiRequestError(str(error)) from error
 
@@ -142,7 +136,7 @@ def _usd_rate(rates: dict, currency_code: str) -> float | None:
 def resolve_rate(from_code: str, to_code: str) -> tuple[float, str, float]:
     from_code = get_currency(from_code).code
     to_code = get_currency(to_code).code
-    rates = load_rates()
+    rates = _db.load_rates()
 
     def lookup(data: dict) -> tuple[float, str, float] | None:
         if from_code == to_code:
@@ -185,7 +179,7 @@ def resolve_rate(from_code: str, to_code: str) -> tuple[float, str, float]:
 
 
 def rates_to_usd_map() -> dict[str, float]:
-    rates = load_rates()
+    rates = _db.load_rates()
     stamp = rates.get("last_refresh")
     if not isinstance(stamp, str) or not _is_fresh(stamp):
         rates = _refresh_rates_from_stub()
@@ -267,7 +261,7 @@ def buy(user: User, currency_code: str, amount) -> str:
     qty = parse_amount(amount)
     update_action_log(currency_code=code, amount=qty)
     rate = _quote_or_error(code)
-    cost = qty * rate
+    cost = convert_by_rate(qty, rate)
     base = _base_currency()
     update_action_log(rate=rate, base=base)
 
@@ -280,7 +274,7 @@ def buy(user: User, currency_code: str, amount) -> str:
         wallet.deposit(qty)
         return before, wallet.balance, created
 
-    before, after, created = transact_portfolio(user.user_id, apply, user=user)
+    before, after, created = _db.transact_portfolio(user.user_id, apply, user=user)
     update_action_log(wallet_before=before, wallet_after=after)
 
     created_line = f"Кошелёк {code} создан автоматически.\n" if created else ""
@@ -308,7 +302,7 @@ def sell(user: User, currency_code: str, amount) -> str:
     qty = parse_amount(amount)
     update_action_log(currency_code=code, amount=qty)
     rate = _quote_or_error(code)
-    revenue = qty * rate
+    revenue = convert_by_rate(qty, rate)
     base = _base_currency()
 
     def apply(portfolio: Portfolio) -> tuple[float, float]:
@@ -325,7 +319,7 @@ def sell(user: User, currency_code: str, amount) -> str:
             portfolio.get_or_create_wallet(base).deposit(revenue)
         return before, wallet.balance
 
-    before, after = transact_portfolio(user.user_id, apply, user=user)
+    before, after = _db.transact_portfolio(user.user_id, apply, user=user)
     update_action_log(rate=rate, base=base, wallet_before=before, wallet_after=after)
 
     return (

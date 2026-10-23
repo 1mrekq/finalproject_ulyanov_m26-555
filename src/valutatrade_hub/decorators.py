@@ -8,8 +8,8 @@ from contextvars import ContextVar
 from datetime import datetime
 from typing import Any
 
-from valutatrade_hub.core.logging_config import setup_logging
 from valutatrade_hub.core.utils import format_amount
+from valutatrade_hub.logging_config import setup_logging
 
 _LOG_FIELDS: ContextVar[dict[str, Any] | None] = ContextVar(
     "action_log_fields", default=None

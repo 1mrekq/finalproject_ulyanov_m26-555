@@ -6,8 +6,6 @@ from valutatrade_hub.core.exceptions import (
     CurrencyNotFoundError,
     InsufficientFundsError,
 )
-from valutatrade_hub.core.logging_config import setup_logging
-from valutatrade_hub.core.storage import initialize_storage
 from valutatrade_hub.core.usecases import (
     buy,
     get_rate,
@@ -16,6 +14,8 @@ from valutatrade_hub.core.usecases import (
     sell,
     show_portfolio,
 )
+from valutatrade_hub.infra.database import DatabaseManager
+from valutatrade_hub.logging_config import setup_logging
 
 CMD_HELP = "help"
 CMD_EXIT = "exit"
@@ -134,28 +134,24 @@ def require_login():
 
 def handle_command_error(error: Exception, command: str | None = None) -> None:
     if isinstance(error, InsufficientFundsError):
-        print(
-            f"Недостаточно средств: доступно {error.available} {error.code}, "
-            f"требуется {error.required} {error.code}"
-        )
+        print(error)
         return
     if isinstance(error, CurrencyNotFoundError):
-        print(f"Неизвестная валюта '{error.code}'")
+        print(error)
         print("Введите help get-rate для справки и списка поддерживаемых кодов.")
         if command == CMD_GET_RATE:
             print(f"Поддерживаемые коды: {', '.join(supported_codes())}")
         return
     if isinstance(error, ApiRequestError):
-        print(f"Ошибка при обращении к внешнему API: {error.reason}")
-        if command == CMD_GET_RATE:
-            print("Повторите попытку позже и проверьте подключение к сети.")
+        print(error)
+        print("Повторите попытку позже и проверьте подключение к сети.")
         return
     print(error)
 
 
 def run() -> None:
     global current_user
-    initialize_storage()
+    DatabaseManager().initialize()
     setup_logging()
     help_command()
 

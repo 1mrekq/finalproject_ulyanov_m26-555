@@ -28,6 +28,13 @@ _PATH_KEYS = {
 
 
 class SettingsLoader:
+    """Единая точка конфигурации: pyproject.toml [tool.valutatrade].
+
+    Singleton через __new__: достаточно одного явного кэша экземпляра, без
+    метакласса. Повторные импорты и вызовы SettingsLoader() возвращают тот же
+    объект, поэтому TTL курсов, пути к JSON и логи читаются из одного места.
+    """
+
     _instance: SettingsLoader | None = None
 
     def __new__(cls) -> SettingsLoader:
@@ -48,9 +55,7 @@ class SettingsLoader:
             section = document.get("tool", {}).get("valutatrade", {})
             if isinstance(section, dict):
                 raw.update(section)
-        self._config = {
-            key: self._normalize(key, value) for key, value in raw.items()
-        }
+        self._config = {key: self._normalize(key, value) for key, value in raw.items()}
 
     def get(self, key: str, default: Any = None) -> Any:
         return self._config.get(key, default)

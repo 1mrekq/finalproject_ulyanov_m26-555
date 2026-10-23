@@ -1,8 +1,11 @@
 import hashlib
+import re
 import secrets
 from datetime import datetime
 
 from valutatrade_hub.core.constants import CRYPTO_CODES
+
+_CURRENCY_CODE = re.compile(r"[A-Z0-9]{2,5}")
 
 
 def generate_salt() -> str:
@@ -16,7 +19,16 @@ def hash_password(password: str, salt: str) -> str:
 def normalize_currency(currency_code: str) -> str:
     if not isinstance(currency_code, str) or not currency_code.strip():
         raise ValueError("Код валюты должен быть непустой строкой")
-    return currency_code.strip().upper()
+    if " " in currency_code.strip():
+        raise ValueError("Код валюты должен содержать 2–5 символов без пробелов")
+    normalized = currency_code.strip().upper()
+    if not _CURRENCY_CODE.fullmatch(normalized):
+        raise ValueError("Код валюты должен содержать 2–5 символов без пробелов")
+    return normalized
+
+
+def convert_by_rate(amount: float, rate: float) -> float:
+    return float(amount) * float(rate)
 
 
 def parse_amount(value) -> float:

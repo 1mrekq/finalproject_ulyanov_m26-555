@@ -18,8 +18,10 @@ show-portfolio [--base <str>]
 buy --currency <str> --amount <float>
 sell --currency <str> --amount <float>
 get-rate --from <str> --to <str>
-help
+currencies
+help [команда]
 exit
 ```
 
-Данные хранятся в JSON-файлах каталога `data/`.
+Раздел «Ошибки» у команды: `help buy`, `help sell`, `help get-rate`.
+Данные хранятся в JSON-файлах каталога `data/`, журнал операций — в `logs/actions.log`.

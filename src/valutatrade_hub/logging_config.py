@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from logging.handlers import RotatingFileHandler
 
-from valutatrade_hub.core.settings import SettingsLoader
+from valutatrade_hub.infra.settings import SettingsLoader
 
 _LOGGER_NAME = "valutatrade_hub.actions"
 _configured = False
@@ -38,5 +38,4 @@ def _resolve_level(name: str) -> int:
     level = logging.getLevelName(str(name).upper())
     if isinstance(level, int):
         return level
-        
     return logging.INFO
