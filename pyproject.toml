@@ -9,6 +9,7 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     "prettytable>=3.18.0",
+    "requests>=2.32.0",
 ]
 
 [project.scripts]
@@ -23,9 +24,11 @@ data_dir = "data"
 users_file = "data/users.json"
 portfolios_file = "data/portfolios.json"
 rates_file = "data/rates.json"
+exchange_rates_file = "data/exchange_rates.json"
 rates_ttl_seconds = 300
 base_currency = "USD"
 log_file = "logs/actions.log"
+parser_log_file = "logs/parser.log"
 log_level = "INFO"
 log_max_bytes = 1048576
 log_backup_count = 5

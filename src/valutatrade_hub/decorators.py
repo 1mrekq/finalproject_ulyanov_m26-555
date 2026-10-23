@@ -1,7 +1,5 @@
 """Декоратор трассировки доменных операций buy/sell/register/login."""
 
-from __future__ import annotations
-
 import functools
 import logging
 from contextvars import ContextVar

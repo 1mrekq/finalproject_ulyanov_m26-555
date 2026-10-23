@@ -54,7 +54,8 @@ def parse_datetime(value) -> datetime:
     if isinstance(value, datetime):
         return value
     if isinstance(value, str):
-        return datetime.fromisoformat(value)
+        normalized = value.replace("Z", "+00:00") if value.endswith("Z") else value
+        return datetime.fromisoformat(normalized)
     raise ValueError("Некорректная дата")
 
 

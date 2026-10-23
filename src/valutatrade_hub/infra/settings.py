@@ -1,17 +1,17 @@
-from __future__ import annotations
-
 import tomllib
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 
 _DEFAULTS: dict[str, Any] = {
     "data_dir": "data",
     "users_file": "data/users.json",
     "portfolios_file": "data/portfolios.json",
     "rates_file": "data/rates.json",
+    "exchange_rates_file": "data/exchange_rates.json",
     "rates_ttl_seconds": 300,
     "base_currency": "USD",
     "log_file": "logs/actions.log",
+    "parser_log_file": "logs/parser.log",
     "log_level": "INFO",
     "log_max_bytes": 1_048_576,
     "log_backup_count": 5,
@@ -23,7 +23,9 @@ _PATH_KEYS = {
     "users_file",
     "portfolios_file",
     "rates_file",
+    "exchange_rates_file",
     "log_file",
+    "parser_log_file",
 }
 
 
@@ -35,9 +37,9 @@ class SettingsLoader:
     объект, поэтому TTL курсов, пути к JSON и логи читаются из одного места.
     """
 
-    _instance: SettingsLoader | None = None
+    _instance: Self | None = None
 
-    def __new__(cls) -> SettingsLoader:
+    def __new__(cls) -> Self:
         if cls._instance is None:
             instance = super().__new__(cls)
             instance._root = Path(__file__).resolve().parents[3]

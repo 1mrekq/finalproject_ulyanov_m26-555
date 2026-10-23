@@ -15,7 +15,9 @@ from valutatrade_hub.core.usecases import (
     show_portfolio,
 )
 from valutatrade_hub.infra.database import DatabaseManager
-from valutatrade_hub.logging_config import setup_logging
+from valutatrade_hub.logging_config import setup_logging, setup_parser_logging
+from valutatrade_hub.parser_service.display import format_show_rates
+from valutatrade_hub.parser_service.updater import UpdateResult, build_updater
 
 CMD_HELP = "help"
 CMD_EXIT = "exit"
@@ -25,6 +27,8 @@ CMD_SHOW_PORTFOLIO = "show-portfolio"
 CMD_BUY = "buy"
 CMD_SELL = "sell"
 CMD_GET_RATE = "get-rate"
+CMD_UPDATE_RATES = "update-rates"
+CMD_SHOW_RATES = "show-rates"
 CMD_CURRENCIES = "currencies"
 
 FUNDS_ERROR = (
@@ -63,6 +67,15 @@ COMMAND_ERRORS = {
         UNKNOWN_CURRENCY_ERROR,
         API_ERROR,
     ),
+    CMD_UPDATE_RATES: (
+        "Неизвестный источник. Используйте coingecko или exchangerate",
+        API_ERROR,
+        "Update completed with errors. Check logs/parser.log for details.",
+    ),
+    CMD_SHOW_RATES: (
+        "Локальный кеш курсов пуст. Выполните 'update-rates', чтобы загрузить данные.",
+        "Курс для 'ABC' не найден в кеше.",
+    ),
 }
 
 current_user = None
@@ -77,6 +90,8 @@ def help_command(topic: str | None = None) -> None:
         print("  buy --currency <str> --amount <float>")
         print("  sell --currency <str> --amount <float>")
         print("  get-rate --from <str> --to <str>")
+        print("  update-rates [--source <coingecko|exchangerate>]")
+        print("  show-rates [--currency <str>] [--top <int>] [--base <str>]")
         print("  currencies")
         print("  help [команда]")
         print("  exit")
@@ -132,6 +147,23 @@ def require_login():
     return current_user
 
 
+def print_update_result(result: UpdateResult) -> None:
+    for item in result.sources:
+        if item.ok:
+            print(f"INFO: Fetching from {item.name}... OK ({item.count} rates)")
+        else:
+            print(f"ERROR: Failed to fetch from {item.name}: {item.error}")
+    if result.quotes:
+        print(f"INFO: Writing {result.total} rates to data/rates.json...")
+    if result.has_errors:
+        print("Update completed with errors. Check logs/parser.log for details.")
+        return
+    print(
+        f"Update successful. Total rates updated: {result.total}. "
+        f"Last refresh: {result.last_refresh}"
+    )
+
+
 def handle_command_error(error: Exception, command: str | None = None) -> None:
     if isinstance(error, InsufficientFundsError):
         print(error)
@@ -153,6 +185,7 @@ def run() -> None:
     global current_user
     DatabaseManager().initialize()
     setup_logging()
+    setup_parser_logging()
     help_command()
 
     while True:
@@ -234,6 +267,39 @@ def run() -> None:
                     print_invalid_value(user_input, command_args)
                     continue
                 print(get_rate(parsed["--from"], parsed["--to"]))
+            elif command == CMD_UPDATE_RATES:
+                parsed = parse_named_args(command_args, optional=("--source",))
+                if parsed is None:
+                    print_invalid_value(user_input, command_args)
+                    continue
+                print("INFO: Starting rates update...")
+                print_update_result(
+                    build_updater().run_update(source=parsed.get("--source"))
+                )
+            elif command == CMD_SHOW_RATES:
+                parsed = parse_named_args(
+                    command_args, optional=("--currency", "--top", "--base")
+                )
+                if parsed is None:
+                    print_invalid_value(user_input, command_args)
+                    continue
+                top = None
+                if "--top" in parsed:
+                    try:
+                        top = int(parsed["--top"])
+                    except ValueError:
+                        print_invalid_value(user_input, command_args)
+                        continue
+                    if top <= 0:
+                        print_invalid_value(user_input, command_args)
+                        continue
+                print(
+                    format_show_rates(
+                        currency=parsed.get("--currency"),
+                        top=top,
+                        base=parsed.get("--base"),
+                    )
+                )
             elif command == CMD_CURRENCIES:
                 print("Поддерживаемые валюты:")
                 for code in supported_codes():

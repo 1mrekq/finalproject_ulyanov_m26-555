@@ -1,12 +1,12 @@
-from __future__ import annotations
-
 import logging
 from logging.handlers import RotatingFileHandler
 
 from valutatrade_hub.infra.settings import SettingsLoader
 
 _LOGGER_NAME = "valutatrade_hub.actions"
+_PARSER_LOGGER_NAME = "valutatrade_hub.parser"
 _configured = False
+_parser_configured = False
 
 
 def setup_logging() -> logging.Logger:
@@ -31,6 +31,30 @@ def setup_logging() -> logging.Logger:
     logger.propagate = False
     _configured = True
 
+    return logger
+
+
+def setup_parser_logging() -> logging.Logger:
+    global _parser_configured
+    logger = logging.getLogger(_PARSER_LOGGER_NAME)
+    if _parser_configured:
+        return logger
+
+    settings = SettingsLoader()
+    path = settings.get("parser_log_file")
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    handler = RotatingFileHandler(
+        path,
+        maxBytes=int(settings.get("log_max_bytes", 1_048_576)),
+        backupCount=int(settings.get("log_backup_count", 5)),
+        encoding="utf-8",
+    )
+    handler.setFormatter(logging.Formatter(settings.get("log_format")))
+    logger.setLevel(_resolve_level(settings.get("log_level", "INFO")))
+    logger.addHandler(handler)
+    logger.propagate = False
+    _parser_configured = True
     return logger
 
 

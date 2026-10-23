@@ -1,4 +1,4 @@
-CRYPTO_CODES = {"BTC", "ETH"}
+CRYPTO_CODES = {"BTC", "ETH", "SOL"}
 
 DEFAULT_RATES = {
     "EUR_USD": {"rate": 1.0786, "updated_at": "2025-10-09T10:30:00"},

@@ -1,6 +1,5 @@
 from datetime import datetime, timedelta
 
-from valutatrade_hub.core.constants import STUB_RATES
 from valutatrade_hub.core.currencies import get_currency
 from valutatrade_hub.core.exceptions import (
     ApiRequestError,
@@ -18,10 +17,15 @@ from valutatrade_hub.core.utils import (
     parse_datetime,
 )
 from valutatrade_hub.decorators import log_action, update_action_log
-from valutatrade_hub.infra.database import DatabaseManager
+from valutatrade_hub.infra.database import DatabaseManager, extract_rate_pairs
 from valutatrade_hub.infra.settings import SettingsLoader
 
-META_KEYS = {"source", "last_refresh"}
+EMPTY_RATES_MESSAGE = (
+    "Локальный кеш курсов пуст. Выполните 'update-rates', чтобы загрузить данные."
+)
+STALE_RATES_MESSAGE = (
+    "Данные курсов устарели. Выполните 'update-rates', чтобы обновить кеш."
+)
 _settings = SettingsLoader()
 _db = DatabaseManager()
 
@@ -90,7 +94,7 @@ def _require_portfolio(user: User) -> Portfolio:
 
 def _pair_payload(rates: dict, from_code: str, to_code: str) -> dict | None:
     key = f"{from_code}_{to_code}"
-    payload = rates.get(key)
+    payload = extract_rate_pairs(rates).get(key)
     if isinstance(payload, dict) and "rate" in payload:
         return payload
     return None
@@ -101,23 +105,16 @@ def _is_fresh(updated_at: str) -> bool:
         updated = parse_datetime(updated_at)
     except ValueError:
         return False
-    return datetime.now() - updated <= _rate_ttl()
+    now = datetime.now(updated.tzinfo) if updated.tzinfo else datetime.now()
+    return now - updated <= _rate_ttl()
 
 
-def _apply_stub_rates(rates: dict) -> dict:
-    now = format_datetime(datetime.now())
-    for pair, rate in STUB_RATES.items():
-        rates[pair] = {"rate": rate, "updated_at": now}
-    rates["source"] = "ParserServiceStub"
-    rates["last_refresh"] = now
-    return rates
-
-
-def _refresh_rates_from_stub() -> dict:
-    try:
-        return _db.transact_rates(_apply_stub_rates)
-    except OSError as error:
-        raise ApiRequestError(str(error)) from error
+def _require_fresh_rates(rates: dict) -> None:
+    if not extract_rate_pairs(rates):
+        raise ValueError(EMPTY_RATES_MESSAGE)
+    stamp = rates.get("last_refresh")
+    if not isinstance(stamp, str) or not _is_fresh(stamp):
+        raise ValueError(STALE_RATES_MESSAGE)
 
 
 def _usd_rate(rates: dict, currency_code: str) -> float | None:
@@ -130,7 +127,7 @@ def _usd_rate(rates: dict, currency_code: str) -> float | None:
     inverse = _pair_payload(rates, base, currency_code)
     if inverse and float(inverse["rate"]) != 0:
         return 1.0 / float(inverse["rate"])
-    return STUB_RATES.get(f"{currency_code}_{base}")
+    return None
 
 
 def resolve_rate(from_code: str, to_code: str) -> tuple[float, str, float]:
@@ -163,16 +160,12 @@ def resolve_rate(from_code: str, to_code: str) -> tuple[float, str, float]:
         stamp = data.get("last_refresh") or format_datetime(datetime.now())
         return from_usd / to_usd, stamp, to_usd / from_usd
 
+    _require_fresh_rates(rates)
     found = lookup(rates)
-    needs_refresh = True
     if found:
         _rate, stamp, _reverse = found
-        needs_refresh = not stamp or not _is_fresh(stamp)
-
-    if needs_refresh:
-        rates = _refresh_rates_from_stub()
-        found = lookup(rates)
-
+        if stamp and not _is_fresh(stamp):
+            raise ValueError(STALE_RATES_MESSAGE)
     if not found:
         raise ApiRequestError(f"курс {from_code}→{to_code} недоступен")
     return found
@@ -180,25 +173,17 @@ def resolve_rate(from_code: str, to_code: str) -> tuple[float, str, float]:
 
 def rates_to_usd_map() -> dict[str, float]:
     rates = _db.load_rates()
-    stamp = rates.get("last_refresh")
-    if not isinstance(stamp, str) or not _is_fresh(stamp):
-        rates = _refresh_rates_from_stub()
+    _require_fresh_rates(rates)
     base = _base_currency()
     converted = {base: 1.0}
-    for key, payload in rates.items():
-        if key in META_KEYS or not isinstance(payload, dict) or "rate" not in payload:
-            continue
-        if "_" not in key:
+    for key, payload in extract_rate_pairs(rates).items():
+        if not isinstance(payload, dict) or "rate" not in payload or "_" not in key:
             continue
         source, target = key.split("_", 1)
         if target == base:
             converted[source] = float(payload["rate"])
         elif source == base and float(payload["rate"]) != 0:
             converted[target] = 1.0 / float(payload["rate"])
-    for pair, rate in STUB_RATES.items():
-        source, target = pair.split("_", 1)
-        if target == base:
-            converted.setdefault(source, rate)
     return converted
 
 

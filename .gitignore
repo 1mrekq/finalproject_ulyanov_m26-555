@@ -12,3 +12,6 @@ venv
 
 # Runtime logs
 logs/
+
+# Secrets
+.env

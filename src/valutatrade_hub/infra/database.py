@@ -1,13 +1,26 @@
-from __future__ import annotations
-
 import json
 from collections.abc import Callable
 from pathlib import Path
-from typing import TypeVar
+from typing import Self, TypeVar
 
-from valutatrade_hub.core.constants import DEFAULT_RATES
 from valutatrade_hub.core.models import Portfolio, User
 from valutatrade_hub.infra.settings import SettingsLoader
+
+RATE_META_KEYS = {"source", "last_refresh", "pairs"}
+
+
+def extract_rate_pairs(data: dict | None) -> dict:
+    if not isinstance(data, dict) or not data:
+        return {}
+    pairs = data.get("pairs")
+    if isinstance(pairs, dict):
+        return dict(pairs)
+    return {
+        key: value
+        for key, value in data.items()
+        if key not in RATE_META_KEYS and isinstance(value, dict) and "rate" in value
+    }
+
 
 T = TypeVar("T")
 
@@ -19,9 +32,9 @@ class DatabaseManager:
     чтобы usecases всегда читали и писали одно и то же хранилище.
     """
 
-    _instance: DatabaseManager | None = None
+    _instance: Self | None = None
 
-    def __new__(cls) -> DatabaseManager:
+    def __new__(cls) -> Self:
         if cls._instance is None:
             instance = super().__new__(cls)
             instance._settings = SettingsLoader()
@@ -34,12 +47,15 @@ class DatabaseManager:
         users_file = self._settings.get("users_file")
         portfolios_file = self._settings.get("portfolios_file")
         rates_file = self._settings.get("rates_file")
+        history_file = self._settings.get("exchange_rates_file")
         if not users_file.exists():
             self._save(users_file, [])
         if not portfolios_file.exists():
             self._save(portfolios_file, [])
         if not rates_file.exists():
-            self._save(rates_file, DEFAULT_RATES)
+            self._save(rates_file, {"pairs": {}, "last_refresh": None})
+        if history_file is not None and not history_file.exists():
+            self._save(history_file, {"records": []})
 
     def load_users(self) -> list[User]:
         data = self._load(self._settings.get("users_file")) or []
@@ -124,8 +140,8 @@ class DatabaseManager:
 
     def load_rates(self) -> dict:
         data = self._load(self._settings.get("rates_file"))
-        if not isinstance(data, dict) or not data:
-            return dict(DEFAULT_RATES)
+        if not isinstance(data, dict):
+            return {}
         return data
 
     def save_rates(self, rates: dict) -> None:
